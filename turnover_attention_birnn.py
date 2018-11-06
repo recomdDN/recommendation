@@ -11,7 +11,7 @@
 
 import warnings
 warnings.filterwarnings("ignore")
-
+import pandas as pd
 from keras.layers import Bidirectional, Concatenate, Permute, Dot, Input, LSTM, Multiply, Reshape
 from keras.layers import RepeatVector, Dense, Activation, Lambda, Embedding
 from keras.optimizers import Adam
@@ -28,6 +28,15 @@ from keras.callbacks import ModelCheckpoint
 from keras.utils import to_categorical
 
 # In[]:
+
+def create_dataset(dataset, look_back):
+    dataX, dataY = [], []
+    for i in range(len(dataset) - look_back - 1):
+        dataX.append(dataset[i: i+look_back])
+        dataY.append(dataset[i+1: i+look_back+1])
+    print(np.shape(dataX), np.shape(dataY))
+    return np.array(dataX)[:,:,np.newaxis], np.array(dataY)[:,:,np.newaxis]
+
 def softmax(x, axis=1):
     """
     Softmax activation function.
@@ -45,7 +54,14 @@ def softmax(x, axis=1):
 
 # In[18]:
 # input len
-Tx = 7
+Tx = Ty = 7
+data = pd.read_csv('turnover.csv', encoding='UTF-8', index_col='date').cumsum()
+data = data.values.flatten()
+
+X, Y = create_dataset(dataset=data, look_back=Tx)
+X = X.swapaxes(0, 1)
+Y = Y.swapaxes(0, 1)
+
 # 定义全局网络层对象
 repeator = RepeatVector(Tx)
 concatenator = Concatenate(axis=-1)
@@ -85,16 +101,14 @@ def one_step_attention(a, s_prev):
 input_size = 1
 output_size = 1
 
-n_a = 32 # The hidden size of Bi-LSTM
-n_s = 128 # The hidden size of LSTM in Decoder
+n_a = 32   # The hidden size of Bi-LSTM
+n_s = 128  # The hidden size of LSTM in Decoder
 
 decoder_LSTM_cell = LSTM(n_s, return_state=True)
 output_layer = Dense(output_size, activation=softmax)
 
 
 # In[24]:
-
-# 定义网络层对象（用在model函数中）
 reshapor = Reshape((1, output_size))
 concator = Concatenate(axis=-1)
 
@@ -114,7 +128,7 @@ def define_model(Tx, Ty, n_a, n_s, source_vocab_size, target_vocab_size):
     """
 
     # 定义输入层
-    X = Input(shape=(Tx,))
+    X = Input(shape=(None, Tx,))
 
     # Decoder端LSTM的初始状态
     s0 = Input(shape=(n_s,), name='s0')
@@ -166,16 +180,14 @@ outputs = list(Y.swapaxes(0, 1))
 
 # In[ ]:
 
-is_train = False
-load_model = True
-model = define_model(Tx, Ty, n_a, n_s, len(source_vocab_to_int), len(target_vocab_to_int))
+is_train = True
+load_model = False
+model = define_model(Tx, Ty, n_a, n_s, input_size, output_size)
 model.summary()
-model.compile(optimizer=Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.001),
-              metrics=['accuracy'],
-              loss='categorical_crossentropy')
+model.compile(optimizer=Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.001), loss='mse')
 
 # In[ ]:
-file_path = r"D:\MyProject\mt_attention_birnn\pretrained_seq2seq_model.h5"
+file_path = r"D:\MyProject\mt_attention_birnn\turnover_model.h5"
 if load_model:
     # 加载结构
     # model = model_from_json(open('my_model_architecture.json').read())
@@ -188,7 +200,7 @@ if is_train:
     # 训练模型
     checkpoint = ModelCheckpoint(file_path, monitor='val_loss', verbose=1
                                  , save_best_only=True, save_weights_only=True, mode='min')
-    model.fit([X, s0, c0, out0], outputs, epochs=5, batch_size=128, validation_split=0.2
+    model.fit([X, s0, c0, out0], outputs, epochs=5, batch_size=128
               , shuffle=True, verbose=2, callbacks=[checkpoint])
     # 保存结构
     # json_string = model.to_json()
@@ -202,34 +214,34 @@ if is_train:
 # ## 3.3 预测
 # In[ ]:
 
-def make_prediction(sentence):
-    """
-    对给定的句子进行翻译
-    """
-    # 将句子分词后转化为数字编码
-    unk_idx = source_vocab_to_int["<UNK>"]
-    word_idx = [source_vocab_to_int.get(word, unk_idx) for word in sentence.lower().split()]
-    
-    word_idx = np.array(word_idx + [0] * (20 - len(word_idx)))
-    
-    # 翻译结果
-    preds = model.predict([word_idx.reshape(-1,20), s0, c0, out0])
-    predictions = np.argmax(preds, axis=-1)
-    
-    # 转换为单词
-    idx = [target_int_to_vocab.get(idx[0], "<UNK>") for idx in predictions]
-    
-    # 返回句子
-    return " ".join(idx)
-
-
-# In[ ]:
-while(1):
-    your_sentence = input("Please input your sentences: ")
-    if your_sentence != 'end':
-        print(make_prediction(your_sentence))
-    else:
-        break
+# def make_prediction(sentence):
+#     """
+#     对给定的句子进行翻译
+#     """
+#     # 将句子分词后转化为数字编码
+#     unk_idx = source_vocab_to_int["<UNK>"]
+#     word_idx = [source_vocab_to_int.get(word, unk_idx) for word in sentence.lower().split()]
+#
+#     word_idx = np.array(word_idx + [0] * (20 - len(word_idx)))
+#
+#     # 翻译结果
+#     preds = model.predict([word_idx.reshape(-1,20), s0, c0, out0])
+#     predictions = np.argmax(preds, axis=-1)
+#
+#     # 转换为单词
+#     idx = [target_int_to_vocab.get(idx[0], "<UNK>") for idx in predictions]
+#
+#     # 返回句子
+#     return " ".join(idx)
+#
+#
+# # In[ ]:
+# while(1):
+#     your_sentence = input("Please input your sentences: ")
+#     if your_sentence != 'end':
+#         print(make_prediction(your_sentence))
+#     else:
+#         break
 
 
 
