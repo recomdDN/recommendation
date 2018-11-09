@@ -1,4 +1,3 @@
-
 # coding: utf-8
 
 # # 简介
@@ -10,12 +9,12 @@
 # In[1]:
 
 import warnings
+
 warnings.filterwarnings("ignore")
 import pandas as pd
 from keras.layers import Bidirectional, Concatenate, Permute, Dot, Input, LSTM, Multiply, Reshape
 from keras.layers import RepeatVector, Dense, Activation, Lambda, Embedding
 from keras.optimizers import Adam
-from keras.utils import to_categorical
 from keras.models import load_model, Model
 import keras.backend as K
 import keras
@@ -25,17 +24,16 @@ import tqdm
 import matplotlib.pyplot as plt
 from keras.models import model_from_json
 from keras.callbacks import ModelCheckpoint
-from keras.utils import to_categorical
+
 
 # In[]:
 
 def create_dataset(dataset, look_back):
     dataX, dataY = [], []
-    for i in range(len(dataset) - look_back - 1):
-        dataX.append(dataset[i: i+look_back])
-        dataY.append(dataset[i+1: i+look_back+1])
-    print(np.shape(dataX), np.shape(dataY))
-    return np.array(dataX)[:,:,np.newaxis], np.array(dataY)[:,:,np.newaxis]
+    for i in range(len(dataset) - 2*look_back):
+        dataX.append(dataset[i: i + look_back])
+        dataY.append(dataset[i + look_back: i + 2*look_back])
+    return np.array(dataX)[:, :, np.newaxis], np.array(dataY)[:, :, np.newaxis]
 
 def softmax(x, axis=1):
     """
@@ -57,10 +55,11 @@ def softmax(x, axis=1):
 Tx = Ty = 7
 data = pd.read_csv('turnover.csv', encoding='UTF-8', index_col='date').cumsum()
 data = data.values.flatten()
+d_mean = np.mean(data)
+d_std = np.std(data)
+data = (data - d_mean) / d_std
 
 X, Y = create_dataset(dataset=data, look_back=Tx)
-X = X.swapaxes(0, 1)
-Y = Y.swapaxes(0, 1)
 
 # 定义全局网络层对象
 repeator = RepeatVector(Tx)
@@ -101,12 +100,11 @@ def one_step_attention(a, s_prev):
 input_size = 1
 output_size = 1
 
-n_a = 32   # The hidden size of Bi-LSTM
-n_s = 128  # The hidden size of LSTM in Decoder
+n_a = 10  # The hidden size of Bi-LSTM
+n_s = 10  # The hidden size of LSTM in Decoder
 
 decoder_LSTM_cell = LSTM(n_s, return_state=True)
 output_layer = Dense(output_size, activation=softmax)
-
 
 # In[24]:
 reshapor = Reshape((1, output_size))
@@ -128,31 +126,29 @@ def define_model(Tx, Ty, n_a, n_s, source_vocab_size, target_vocab_size):
     """
 
     # 定义输入层
-    X = Input(shape=(None, Tx,))
+    X = Input(shape=(Tx, input_size))
 
     # Decoder端LSTM的初始状态
     s0 = Input(shape=(n_s,), name='s0')
     c0 = Input(shape=(n_s,), name='c0')
 
     # Decoder端LSTM的初始输入
-    out0 = Input(shape=(target_vocab_size, ), name='out0')
+    out0 = Input(shape=(target_vocab_size,), name='out0')
     out = reshapor(out0)
 
     s = s0
     c = c0
 
-    # 模型输出列表，用来存储翻译的结果
+    # 模型输出列表，用来存储输出的结果
     outputs = []
 
     # 定义Bi-LSTM
     a = Bidirectional(LSTM(n_a, return_sequences=True))(X)
 
-    # Decoder端，迭代Ty轮，每轮生成一个翻译结果
+    # Decoder端，逐个时刻处理
     for t in range(Ty):
-
-        # 获取Context Vector
+        # 获取当前时刻Context Vector
         context = one_step_attention(a, s)
-
         # 将Context Vector与上一轮的翻译结果进行concat
         context = concator([context, reshapor(out)])
         s, _, c = decoder_LSTM_cell(context, initial_state=[s, c])
@@ -167,7 +163,6 @@ def define_model(Tx, Ty, n_a, n_s, source_vocab_size, target_vocab_size):
 
     return model
 
-
 # In[29]:
 
 # 初始化各类向量
@@ -176,7 +171,6 @@ s0 = np.zeros((m, n_s))
 c0 = np.zeros((m, n_s))
 out0 = np.zeros((m, output_size))
 outputs = list(Y.swapaxes(0, 1))
-
 
 # In[ ]:
 
@@ -194,22 +188,19 @@ if load_model:
     # 加载参数
     model.load_weights(file_path)
 
-
-
 if is_train:
     # 训练模型
-    checkpoint = ModelCheckpoint(file_path, monitor='val_loss', verbose=1
-                                 , save_best_only=True, save_weights_only=True, mode='min')
-    model.fit([X, s0, c0, out0], outputs, epochs=5, batch_size=128
-              , shuffle=True, verbose=2, callbacks=[checkpoint])
+    # checkpoint = ModelCheckpoint(file_path, monitor='val_loss', verbose=1
+    #                              , save_best_only=True, save_weights_only=True, mode='min')
+    # model.fit([X, s0, c0, out0], outputs, epochs=1000, batch_size=128
+    #           , shuffle=True, verbose=2, callbacks=[checkpoint])
+    model.fit([X, s0, c0, out0], outputs, epochs=1000, batch_size=128
+              , shuffle=True, verbose=1)
     # 保存结构
     # json_string = model.to_json()
     # open('my_model_architecture.json', 'w').write(json_string)
     # 保存参数
     # model.save_weights(file_path)
-
-
-
 
 # ## 3.3 预测
 # In[ ]:
@@ -242,6 +233,3 @@ if is_train:
 #         print(make_prediction(your_sentence))
 #     else:
 #         break
-
-
-
